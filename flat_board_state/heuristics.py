@@ -37,6 +37,12 @@ def advanced_heuristic(_flat_board_state):
     holes = _flat_board_state.holes
     if not holes:
         return 0
+    # A state generated again through another path is a duplicate: its value
+    # is already known, so one dictionary lookup replaces the evaluation.
+    cache = _flat_board_state.h_cache
+    cached = cache.get(_flat_board_state)
+    if cached is not None:
+        return cached
     cols = _flat_board_state.cols
     dist = _flat_board_state.dist
     inf = math.inf
@@ -80,4 +86,6 @@ def advanced_heuristic(_flat_board_state):
     directional_term = (max(hole_r, max(cube_r)) + max(hole_l, max(cube_l))
                         + max(hole_u, max(cube_u)) + max(hole_d, max(cube_d)))
 
-    return bfs_term if bfs_term > directional_term else directional_term
+    result = bfs_term if bfs_term > directional_term else directional_term
+    cache[_flat_board_state] = result
+    return result

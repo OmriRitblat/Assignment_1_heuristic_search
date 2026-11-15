@@ -82,8 +82,9 @@ class flat_board_state:
             self.cols = parent.cols
             self.walls = parent.walls
             self.dist = parent.dist
+            self.h_cache = parent.h_cache
             self.cubes = frozenset(kwargs["cubes"])
-            self.holes = frozenset(kwargs["holes"])
+            self.holes = frozenset(kwargs["holes"])   # no copy if already a frozenset
         else:
             self.rows = len(instance_map)
             self.cols = len(instance_map[0]) if self.rows else 0
@@ -103,6 +104,9 @@ class flat_board_state:
             # from cell (r, c) to that hole, walls respected
             self.dist = {hole: build_hole_table(self.walls, self.rows, self.cols, hole)
                          for hole in self.holes}
+            # state -> heuristic value, shared by all states of this board, so a
+            # state reached again (duplicate) is not evaluated twice
+            self.h_cache = {}
 
         # cubes + holes fully describe the state (walls never change)
         self._hash = hash((self.cubes, self.holes))
@@ -132,8 +136,9 @@ class flat_board_state:
         else:
             order = sorted(self.cubes, key=lambda p: p[1], reverse=(dc > 0))
 
+        holes = self.holes
         new_cubes = set()
-        new_holes = set(self.holes)
+        filled = []          # holes filled by this move (two cubes never share a target)
         moved = False
         for r, c in order:
             nr, nc = r + dr, c + dc
@@ -141,8 +146,8 @@ class flat_board_state:
                     or (nr, nc) in walls                       # wall
                     or (nr, nc) in new_cubes):                 # stuck cube ahead
                 new_cubes.add((r, c))
-            elif (nr, nc) in new_holes:                        # falls into hole
-                new_holes.remove((nr, nc))
+            elif (nr, nc) in holes:                            # falls into hole
+                filled.append((nr, nc))
                 moved = True
             else:                                              # free cell
                 new_cubes.add((nr, nc))
@@ -150,6 +155,8 @@ class flat_board_state:
 
         if not moved:
             return None
+        # most moves fill nothing: reuse the parent's holes frozenset, no copy
+        new_holes = holes.difference(filled) if filled else holes
         return flat_board_state(parent=self, cubes=new_cubes, holes=new_holes)
 
     # you can change the body of the function if you want
