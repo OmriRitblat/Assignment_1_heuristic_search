@@ -1,91 +1,184 @@
 import math
 
+INF = math.inf
+
 
 def base_heuristic(_flat_board_state):
     # For every hole: the Manhattan distance to its closest cube.
     # The heuristic is the maximum of those distances over all holes.
-    cubes = _flat_board_state.cubes
     holes = _flat_board_state.holes
     if not holes:
         return 0
+    cubes = _flat_board_state.cubes
+    if len(cubes) < len(holes):
+        # every cube fills at most one hole: this state can never be solved
+        return INF
+    coords = _flat_board_state.board.coords
+    cube_rc = [coords[i] for i in cubes]
     max_dist = 0
-    for hr, hc in holes:
-        nearest = min(abs(hr - cr) + abs(hc - cc) for cr, cc in cubes)
+    for h in holes:
+        hr, hc = coords[h]
+        nearest = min(abs(hr - cr) + abs(hc - cc) for cr, cc in cube_rc)
         if nearest > max_dist:
             max_dist = nearest
     return max_dist
 
 
 def advanced_heuristic(_flat_board_state):
-    # h = max( BFS term , directional term )
+    # Lower bound on the number of moves still needed, built from per-pair
+    # tables precomputed once per hole (walls respected):
     #
-    # BFS term:  h1 = max over holes of ( min over cubes of BFS_dist(cube, hole) )
-    #            BFS distances respect walls, precomputed once per hole.
+    #   bfs(c, h)  shortest wall-respecting walk from cube c to hole h
+    #   D(c, h)    fewest steps in direction D (right/left/up/down) on any
+    #              such walk
     #
-    # Directional term: a cube advances at most one cell per move in a given
-    #            direction, so the solution needs at least D* moves in each
-    #            direction D, and the four directions are different moves:
-    #            D(cube, hole) = fewest D-moves on any wall-respecting path
-    #                            from the cube to the hole (precomputed table)
-    #            D_holes = max over holes of ( min over cubes of D(cube, hole) )
-    #            D_cubes = max over cubes of ( min over holes of D(cube, hole) )
-    #            D*      = max(D_holes, D_cubes)
-    #            h2 = right* + left* + up* + down*
+    # In any solution every hole h is filled by a DIFFERENT cube M(h)
+    # (a cube disappears into the hole it fills).  For that assignment M:
+    #   * the solution has at least  max_h bfs(M(h), h)  moves, because a cube
+    #     advances at most one cell per move, and
+    #   * at least  max_h D(M(h), h)  moves in direction D, because only a
+    #     D-move gives a cube a D-step.  The four directions are different
+    #     moves, so the solution has at least  sum_D max_h D(M(h), h)  moves.
+    # We don't know M, so we take the minimum over all one-to-one
+    # assignments of  max( max_h bfs , sum_D max_h D ).  This is admissible
+    # and consistent, and dominates both the old "nearest cube" terms and
+    # the Manhattan base heuristic.  It also returns INF (a dead state) when
+    # no assignment exists, e.g. a hole no remaining cube can reach.
     #
-    # Both terms are computed in ONE pass over the (hole, cube) pairs, with a
-    # single table lookup per pair: (bfs_dist, right, left, up, down).
+    # The exact minimum is a small search over assignments; with many cubes
+    # that could explode, so above EXACT_MAX_CUBES cubes we use a weaker
+    # polynomial bound (_bottleneck_bound).  The choice depends only on the
+    # number of cubes, which never grows along a path, so a path can switch
+    # from the weaker bound to the exact one but never back - this keeps the
+    # heuristic consistent (weaker <= exact on the same state).
     holes = _flat_board_state.holes
     if not holes:
         return 0
     # A state generated again through another path is a duplicate: its value
     # is already known, so one dictionary lookup replaces the evaluation.
-    cache = _flat_board_state.h_cache
+    cache = _flat_board_state.board.h_cache
     cached = cache.get(_flat_board_state)
-    if cached is not None:
-        return cached
-    cols = _flat_board_state.cols
-    dist = _flat_board_state.dist
-    inf = math.inf
+    if cached is None:
+        cached = cache[_flat_board_state] = _advanced_value(_flat_board_state)
+    return cached
 
-    # flat cell index of every cube, plus running per-cube minima
-    cube_idx = [cr * cols + cc for cr, cc in _flat_board_state.cubes]
-    n = len(cube_idx)
-    if n == 0:                          # holes left but no cubes: unsolvable
-        return inf
-    cube_r = [inf] * n
-    cube_l = [inf] * n
-    cube_u = [inf] * n
-    cube_d = [inf] * n
 
-    bfs_term = 0
-    hole_r = hole_l = hole_u = hole_d = 0
-    for hole in holes:
-        table = dist[hole]
-        best = inf                      # nearest cube by BFS
-        mr = ml = mu = md = inf         # per-hole minima per direction
-        for i in range(n):
-            dv, need_r, need_l, need_u, need_d = table[cube_idx[i]]
-            if dv < best:
-                best = dv
-            # hole side: min over cubes
-            if need_r < mr: mr = need_r
-            if need_l < ml: ml = need_l
-            if need_u < mu: mu = need_u
-            if need_d < md: md = need_d
-            # cube side: min over holes
-            if need_r < cube_r[i]: cube_r[i] = need_r
-            if need_l < cube_l[i]: cube_l[i] = need_l
-            if need_u < cube_u[i]: cube_u[i] = need_u
-            if need_d < cube_d[i]: cube_d[i] = need_d
-        if best > bfs_term: bfs_term = best
-        if mr > hole_r: hole_r = mr
-        if ml > hole_l: hole_l = ml
-        if mu > hole_u: hole_u = mu
-        if md > hole_d: hole_d = md
+def _advanced_value(_flat_board_state):
+    holes = _flat_board_state.holes
+    cubes = _flat_board_state.cubes
+    m, n = len(holes), len(cubes)
+    if n < m:
+        return INF
+    dist = _flat_board_state.board.dist
 
-    directional_term = (max(hole_r, max(cube_r)) + max(hole_l, max(cube_l))
-                        + max(hole_u, max(cube_u)) + max(hole_d, max(cube_d)))
+    if m == 1:
+        # one hole: the best single cube
+        table = dist[next(iter(holes))]
+        best = INF
+        for c in cubes:
+            bv, r, l, u, d = table[c]
+            v = r + l + u + d
+            if bv > v:
+                v = bv
+            if v < best:
+                best = v
+        return best
 
-    result = bfs_term if bfs_term > directional_term else directional_term
-    cache[_flat_board_state] = result
-    return result
+    cube_list = list(cubes)
+    # rows[k] = candidate (cost tuple, cube position in cube_list) for hole k,
+    # cheapest first, unreachable cubes dropped
+    rows = []
+    lower = 0
+    for h in holes:
+        table = dist[h]
+        cand = []
+        for j, c in enumerate(cube_list):
+            t = table[c]
+            if t[0] != INF:
+                cand.append((max(t[0], t[1] + t[2] + t[3] + t[4]), t, j))
+        if not cand:
+            return INF                  # nobody can reach this hole
+        cand.sort()
+        if cand[0][0] > lower:
+            lower = cand[0][0]          # this hole alone needs at least that
+        rows.append(cand)
+    # most constrained hole first: fewer branches, earlier pruning
+    rows.sort(key=lambda cand: (len(cand), -cand[0][0]))
+
+    if n > EXACT_MAX_CUBES:
+        return _bottleneck_bound(rows, m, n)
+
+    best = [INF]
+
+    def assign(k, used, b, r, l, u, d):
+        # returns True to stop the search (lower bound reached = optimum)
+        if k == m:
+            v = r + l + u + d
+            best[0] = b if b > v else v
+            return best[0] <= lower     # cannot do better than the lower bound
+        for _, (bv, rv, lv, uv, dv), j in rows[k]:
+            if used >> j & 1:
+                continue
+            nb = b if b > bv else bv
+            nr = r if r > rv else rv
+            nl = l if l > lv else lv
+            nu = u if u > uv else uv
+            nd = d if d > dv else dv
+            v = nr + nl + nu + nd
+            if nb > v:
+                v = nb
+            if v >= best[0]:            # adding holes never lowers the value
+                continue
+            if assign(k + 1, used | (1 << j), nb, nr, nl, nu, nd):
+                return True
+        return False
+
+    assign(0, 0, 0, 0, 0, 0, 0)
+    return best[0]
+
+
+# Above this many cubes the exact assignment search is replaced by the
+# polynomial bottleneck bound (see advanced_heuristic).
+EXACT_MAX_CUBES = 7
+
+
+def _bottleneck_bound(rows, m, n):
+    """max( B_bfs , B_right + B_left + B_up + B_down ) where B_x is the
+    smallest t such that every hole can get a different cube with x <= t.
+    Admissible: the real assignment M has  max_h x(M(h), h) >= B_x  for every
+    metric x, so the bounds above still hold with B_x in place of the max."""
+    def bottleneck(metric):
+        values = sorted({t[metric] for cand in rows for _, t, _ in cand})
+        # any assignment is at least the worst hole's cheapest option
+        floor = max(min(t[metric] for _, t, _ in cand) for cand in rows)
+        for limit in values:
+            if limit >= floor and _has_assignment(rows, m, n, metric, limit):
+                return limit
+        return INF
+
+    b = bottleneck(0)
+    if b == INF:
+        return INF
+    s = bottleneck(1) + bottleneck(2) + bottleneck(3) + bottleneck(4)
+    return b if b > s else s
+
+
+def _has_assignment(rows, m, n, metric, limit):
+    """Can every hole get a distinct cube whose `metric` is <= limit?
+    (Kuhn's augmenting-path bipartite matching.)"""
+    adj = [[j for _, t, j in cand if t[metric] <= limit] for cand in rows]
+    owner = [-1] * n
+
+    def augment(k, seen):
+        for j in adj[k]:
+            if not seen[j]:
+                seen[j] = True
+                if owner[j] < 0 or augment(owner[j], seen):
+                    owner[j] = k
+                    return True
+        return False
+
+    for k in range(m):
+        if not augment(k, [False] * n):
+            return False
+    return True

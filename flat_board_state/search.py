@@ -1,7 +1,10 @@
 import heapq
+import math
 
 from search_node import search_node
 from flat_board_state import flat_board_state
+
+INF = math.inf
 
 count_generated = 0
 count_expanded = 0
@@ -87,7 +90,10 @@ def search(start_state, heuristic):
     count_expanded = 0
     open_set = create_open_set()
     closed_set = create_closed_set()
-    start_node = search_node(start_state, 0, heuristic(start_state))
+    start_h = heuristic(start_state)
+    if start_h == INF:                  # the heuristic proved it unsolvable
+        return None
+    start_node = search_node(start_state, 0, start_h)
     add_to_open(start_node, open_set)
 
     while open_not_empty(open_set):
@@ -106,12 +112,20 @@ def search(start_state, heuristic):
         count_expanded += 1
 
         for neighbor, edge_cost in current.get_neighbors():
-            curr_neighbor = search_node(neighbor, current.g + edge_cost, heuristic(neighbor), current)
-            if not duplicate_in_open(curr_neighbor, open_set) and not duplicate_in_closed(curr_neighbor, closed_set):
-                add_to_open(curr_neighbor, open_set)
-                count_generated += 1
+            # duplicate checks only need state and g, so the (more expensive)
+            # heuristic is computed only for nodes that will really enter open
+            curr_neighbor = search_node(neighbor, current.g + edge_cost, 0, current)
+            if duplicate_in_open(curr_neighbor, open_set) or duplicate_in_closed(curr_neighbor, closed_set):
+                continue
+            h = heuristic(neighbor)
+            if h == INF:                # dead state: no solution through it
+                continue
+            curr_neighbor.h = h
+            curr_neighbor.f = curr_neighbor.g + h
+            add_to_open(curr_neighbor, open_set)
+            count_generated += 1
 
-    return None
+    return None                         # unsolvable
 
 
 
