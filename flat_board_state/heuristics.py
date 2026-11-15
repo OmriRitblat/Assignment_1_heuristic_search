@@ -39,8 +39,11 @@ def advanced_heuristic(_flat_board_state):
         return 0
     # A state generated again through another path is a duplicate: its value
     # is already known, so one dictionary lookup replaces the evaluation.
+    # Keyed by (cubes, holes) rather than the state object, so the cache
+    # holds no state objects (keeps pickle / deepcopy of a state working).
     cache = _flat_board_state.h_cache
-    cached = cache.get(_flat_board_state)
+    key = (_flat_board_state.cubes, holes)
+    cached = cache.get(key)
     if cached is not None:
         return cached
     cols = _flat_board_state.cols
@@ -87,5 +90,5 @@ def advanced_heuristic(_flat_board_state):
                         + max(hole_u, max(cube_u)) + max(hole_d, max(cube_d)))
 
     result = bfs_term if bfs_term > directional_term else directional_term
-    cache[_flat_board_state] = result
+    cache[key] = result
     return result

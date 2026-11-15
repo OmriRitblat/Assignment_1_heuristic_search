@@ -104,8 +104,8 @@ class flat_board_state:
             # from cell (r, c) to that hole, walls respected
             self.dist = {hole: build_hole_table(self.walls, self.rows, self.cols, hole)
                          for hole in self.holes}
-            # state -> heuristic value, shared by all states of this board, so a
-            # state reached again (duplicate) is not evaluated twice
+            # (cubes, holes) -> heuristic value, shared by all states of this
+            # board, so a state reached again (duplicate) is not evaluated twice
             self.h_cache = {}
 
         # cubes + holes fully describe the state (walls never change)
