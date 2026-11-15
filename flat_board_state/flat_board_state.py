@@ -73,8 +73,8 @@ class _Board:
         self.dist = {h: self._hole_table(h) for h in holes}
         self.key = (rows, cols, self.walls)
         self._initial = (frozenset(cubes), frozenset(holes))
-        # state -> advanced heuristic value, shared by all states of this
-        # board, so a state reached again (duplicate) is not evaluated twice
+        # (cubes, holes) -> advanced heuristic value, shared by all states of
+        # this board, so a state reached again (duplicate) is not evaluated twice
         self.h_cache = {}
 
     def _neighbours(self, i):
